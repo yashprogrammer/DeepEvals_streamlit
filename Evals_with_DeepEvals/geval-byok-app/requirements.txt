@@ -1,0 +1,6 @@
+# Pinned for Streamlit Community Cloud (~1 GB RAM, no GPU) — keep it torch-free.
+# deepeval's LocalModel (pointed at Groq) and Groq's own SDK are both API-based.
+
+streamlit==1.58.0
+deepeval==4.1.0
+groq==1.5.0
