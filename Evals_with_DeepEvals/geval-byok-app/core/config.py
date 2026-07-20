@@ -12,11 +12,13 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 # Task Completion) — see core/providers.py::_build_trace_judge. Each of those metrics makes 2-3
 # internal LLM calls apiece (extract, then score) with verbose prompt templates, so a single
 # fully-evaluated agent run is more like 12-13 real judge calls, not 6 — GROQ_MODEL's 12K TPM cap
-# gets exhausted fast across a batch of several runs. meta-llama/llama-4-scout-17b-16e-instruct
-# has 30K TPM (2.5x) for the same 1K RPD, at the same free tier, trading some structured-output
-# reliability for headroom — worth it only for these 4 metrics' call volume, not app-wide — see
-# console.groq.com/docs/rate-limits.
-GROQ_JUDGE_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+# gets exhausted fast across a batch of several runs. This used to point at
+# meta-llama/llama-4-scout-17b-16e-instruct (30K TPM, 2.5x headroom) specifically for that reason,
+# but Groq decommissioned that model (its API calls now 404 with model_not_found). As of
+# console.groq.com/docs/rate-limits, no other free-tier model has meaningfully more TPM than
+# GROQ_MODEL's 12K without also losing structured-output reliability (see _build_judge below), so
+# both judge roles share the same model until Groq ships a better-suited free-tier option.
+GROQ_JUDGE_MODEL = GROQ_MODEL
 
 # Groq's API is OpenAI-compatible; DeepEval's LocalModel talks to any OpenAI-compatible endpoint.
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"

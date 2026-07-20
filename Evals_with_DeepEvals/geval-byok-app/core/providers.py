@@ -127,9 +127,10 @@ def _build_trace_judge():
     """Judge for the 4 trace-based agent metrics only (Step Efficiency, Plan Adherence, Plan
     Quality, Task Completion). Each makes 2-3 internal extract-then-score LLM calls with verbose
     prompts, so a single fully-scored agent run is realistically ~12-13 judge calls -- across a
-    batch of several runs that reliably exceeds GROQ_MODEL's 12K TPM cap. GROQ_JUDGE_MODEL trades
-    some structured-output reliability for 30K TPM (2.5x), which is worth it specifically here
-    since these 4 metrics are the only ones that generate enough call volume to hit the cap.
+    batch of several runs that can exceed GROQ_MODEL's 12K TPM cap. GROQ_JUDGE_MODEL currently
+    equals GROQ_MODEL (see core/config.py) since the higher-TPM model this used to point at was
+    decommissioned by Groq with no better-suited free-tier replacement available; kept as a
+    separate constant/function so swapping in a higher-TPM model later is a one-line change.
     """
     from deepeval.models import LocalModel
     return LocalModel(model=GROQ_JUDGE_MODEL, api_key=os.environ.get("GROQ_API_KEY"),
@@ -402,18 +403,41 @@ def run_rag_evaluation(
     return {"breakdown": breakdown}
 
 
+# Groq's Llama tool-calling models sometimes echo a pseudo tool-call as plain text instead of (or
+# alongside) a real structured tool_call, in either of two malformed shapes seen in practice:
+#   <function=search_docs {"query": "..."}</function>   (no ">" closing the opening pseudo-tag)
+#   <function>search_docs{"query": "..."}</function>    (a real tag, name+args as its "content")
+# Matches either shape so both the 400 'tool_use_failed' recovery path below and the final-reply
+# cleanup in run_agent_turn can strip it out wherever it shows up.
+_FUNCTION_TAG_RE = re.compile(r"<function[=>]\s*\w*\s*\{.*?\}\s*</function>", re.DOTALL)
+
+
+def _strip_function_tag(text: str) -> str:
+    return _FUNCTION_TAG_RE.sub("", text or "").strip()
+
+
+# Matches a leading "Plan: <one sentence>." the model sometimes still prepends to what's supposed
+# to be its final plain-language answer (most often right after the _FINAL_REPLY_NUDGE fails to
+# fully suppress the habit). Only used to clean the visible `reply` text -- never applied to
+# `plan_text` itself, which is deliberately shown as-is in the chat's "Plan" expander.
+_LEADING_PLAN_RE = re.compile(r"^Plan:\s*[^.]*\.\s*", re.IGNORECASE)
+
+
+def _clean_final_answer(text: str) -> str:
+    text = _strip_function_tag(text)
+    return _LEADING_PLAN_RE.sub("", text, count=1).strip()
+
+
 def _parse_failed_generation(text: str) -> tuple[list, str]:
-    """Groq's Llama tool-calling models sometimes emit a malformed pseudo tool-call as raw text
-    (e.g. `<function=search_docs {"query": "..."}</function>`, often preceded by our own
-    requested "Plan: ..." sentence) instead of a structured tool_call, and Groq's own server
-    then fails to parse it -- a 400 'tool_use_failed' BadRequestError. The intended call(s) are
-    still recoverable from the error's `failed_generation` field; whatever text comes before the
-    first `<function=...>` tag (typically the plan sentence) is preserved too, so it isn't lost.
+    """Recovers a malformed pseudo tool-call from a 400 'tool_use_failed' BadRequestError's
+    `failed_generation` field (see _FUNCTION_TAG_RE above for the two shapes handled). Whatever
+    text comes before the first tag (typically our requested "Plan: ..." sentence) is preserved
+    too, so it isn't lost.
 
     Returns (calls, plan_text) -- calls is [] if nothing recoverable was found.
     """
     text = (text or "").strip()
-    matches = list(re.finditer(r"<function=(\w+)\s*(\{.*?\})\s*</function>", text, re.DOTALL))
+    matches = list(re.finditer(r"<function[=>]\s*(\w+)\s*(\{.*?\})\s*</function>", text, re.DOTALL))
     if not matches:
         return [], text
     calls = [
@@ -444,6 +468,17 @@ def _first_agent_completion(client, model: str, messages: list):
         return SimpleNamespace(content=plan_text, tool_calls=calls)
 
 
+# Nudges the model toward a plain final answer once tool results are in. Appended only to the
+# one-off list sent for that completion call, never persisted into the threaded `messages` --
+# without it, the model tends to fall back into "Plan: ... <function=...>" narration even for a
+# call that has no `tools=` argument to actually act on.
+_FINAL_REPLY_NUDGE = {
+    "role": "system",
+    "content": "Tool results are in. Reply to the user now with a direct, plain-language answer "
+               "-- no plan, no function-call syntax, just the answer.",
+}
+
+
 def run_agent_turn(messages: list[dict], user_message: str) -> dict:
     """Runs one turn of the agent: appends user_message to the running Groq-format `messages`,
     lets the agent propose + execute tool calls, then produces a reply. `messages` should start
@@ -460,9 +495,12 @@ def run_agent_turn(messages: list[dict], user_message: str) -> dict:
 
     first = _first_agent_completion(client, GROQ_MODEL, messages)
     calls = first.tool_calls or []
-    plan_text = (first.content or "").strip()
+    # Strip any pseudo tool-call tag before this is (a) shown as the tool_events' "reasoning" and
+    # (b) persisted into `messages` -- otherwise it pollutes the conversation history the model
+    # reads on every later turn, making the garbage more likely to recur, not less.
+    plan_text = _strip_function_tag(first.content)
 
-    messages.append({"role": "assistant", "content": first.content or "", "tool_calls": [
+    messages.append({"role": "assistant", "content": plan_text, "tool_calls": [
         {"id": c.id, "type": "function",
          "function": {"name": c.function.name, "arguments": c.function.arguments}}
         for c in calls
@@ -477,11 +515,13 @@ def run_agent_turn(messages: list[dict], user_message: str) -> dict:
         messages.append({"role": "tool", "tool_call_id": c.id, "content": output})
 
     if calls:
-        reply = client.chat.completions.create(
-            model=GROQ_MODEL, messages=messages, temperature=0).choices[0].message.content.strip()
+        raw_reply = client.chat.completions.create(
+            model=GROQ_MODEL, messages=[*messages, _FINAL_REPLY_NUDGE], temperature=0,
+        ).choices[0].message.content
+        reply = _clean_final_answer(raw_reply) or "(the agent didn't return a final answer)"
         messages.append({"role": "assistant", "content": reply})
     else:
-        reply = plan_text or "(no tool called)"
+        reply = _clean_final_answer(plan_text) or "(no tool called)"
 
     return {"reply": reply, "tool_events": tool_events, "messages": messages}
 
