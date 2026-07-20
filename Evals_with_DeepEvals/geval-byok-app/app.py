@@ -35,7 +35,7 @@ from core.providers import (
     run_rag_pipeline,
 )
 from ui.async_utils import run_in_thread
-from ui.tabs import render_mermaid
+from ui.tabs import TOOL_ICONS, render_mermaid, render_tool_badges
 
 APP_TITLE = "🧑‍⚖️ DeepEval Course Companion"
 APP_TAGLINE = "Bring your own Groq key(s) and pick a topic from the sidebar."
@@ -659,9 +659,11 @@ def render_agent_interact_tab():
     st.divider()
     st.subheader("💬 Or chat with the agent directly")
 
-    for role, content in st.session_state["agent_chat_display"]:
+    for role, content, tool_events in st.session_state["agent_chat_display"]:
         with st.chat_message(role):
             st.write(content)
+            if role == "assistant":
+                render_tool_badges(tool_events)
 
     user_msg = st.chat_input("Ask the agent something…")
     if user_msg:
@@ -671,17 +673,13 @@ def render_agent_interact_tab():
                     run_agent_turn, st.session_state["agent_chat_groq_messages"], user_msg,
                     timeout=WORK_TIMEOUT)
                 st.session_state["agent_chat_groq_messages"] = result["messages"]
-                st.session_state["agent_chat_display"].append(("user", user_msg))
-                st.session_state["agent_chat_display"].append(("assistant", result["reply"]))
+                st.session_state["agent_chat_display"].append(("user", user_msg, []))
+                st.session_state["agent_chat_display"].append(
+                    ("assistant", result["reply"], result["tool_events"]))
                 st.session_state["agent_chat_trace"].extend(result["tool_events"])
                 st.rerun()
             except Exception as e:
                 st.error(f"{type(e).__name__}: {e}")
-
-    if st.session_state["agent_chat_trace"]:
-        st.caption("Tool-call trace for this conversation:")
-        st.dataframe(st.session_state["agent_chat_trace"], use_container_width=True,
-                      hide_index=True)
 
     col3, col4 = st.columns(2)
     with col3:
@@ -705,6 +703,42 @@ def render_agent_interact_tab():
                 {"role": "system", "content": demo_data.AGENT_SYSTEM_PROMPT}]
             st.session_state["agent_chat_trace"] = []
             st.rerun()
+
+    render_agent_trace_section(st.session_state["agent_chat_trace"],
+                                st.session_state["agent_chat_display"])
+
+
+def render_agent_trace_section(trace_events: list[dict], chat_display: list[tuple]):
+    """The full trace, detached from the chat bubbles above so a reply reads as just the answer.
+    Split into Plan / Tool calls / Raw nested trace instead of one flat table, mirroring the
+    breakdown DeepEval's own trace-based agent metrics look at.
+    """
+    st.divider()
+    st.subheader("🔍 Trace")
+    if not trace_events:
+        st.caption("No tool calls yet — run a scenario or chat with the agent above.")
+        return
+
+    plan_tab, tools_tab, raw_tab = st.tabs(
+        ["🧭 Plan", "🛠️ Tool calls", "🧩 Raw nested trace"])
+    with plan_tab:
+        plans = list(dict.fromkeys(ev["reasoning"] for ev in trace_events if ev.get("reasoning")))
+        if plans:
+            for p in plans:
+                st.markdown(f"> {p}")
+        else:
+            st.caption("The agent didn't state a plan for this conversation.")
+    with tools_tab:
+        st.dataframe(
+            [{"Tool": f"{TOOL_ICONS.get(ev['tool'], '🔧')} {ev['tool']}",
+              "Input": ev["input"], "Output": ev["output"]} for ev in trace_events],
+            use_container_width=True, hide_index=True)
+    with raw_tab:
+        st.caption("The nested agent → tool span shape DeepEval's trace-based agent metrics "
+                    "(Task Completion, Step Efficiency, Plan Adherence, Plan Quality) read.")
+        query = chat_display[0][1] if chat_display else ""
+        final_output = chat_display[-1][1] if chat_display else ""
+        st.json(build_agent_trace(query, final_output, trace_events))
 
 
 def render_agent_evaluation_tab():

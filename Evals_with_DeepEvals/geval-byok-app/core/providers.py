@@ -518,21 +518,23 @@ def run_agent_scenario(turns: list[str]) -> dict:
     carrying conversation history from one turn to the next. 2 generation calls per turn (tool
     decision + reply), 0 if no tool was called that turn.
 
-    Returns {"transcript": list[(role, content)], "trace": dict, "final_output": str,
-             "tool_events": list[dict]}.
+    Returns {"transcript": list[(role, content, tool_events)], "trace": dict, "final_output": str,
+             "tool_events": list[dict]}. Each assistant entry in transcript carries the tool_events
+             from that specific turn (empty for user entries) so the UI can badge the right bubble
+             instead of only showing one flat trace for the whole conversation.
     """
     from core.demo_data import AGENT_SYSTEM_PROMPT
 
     messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
-    transcript: list[tuple[str, str]] = []
+    transcript: list[tuple[str, str, list[dict]]] = []
     all_events: list[dict] = []
     final_output = ""
 
     for turn_text in turns:
         result = run_agent_turn(messages, turn_text)
         messages = result["messages"]
-        transcript.append(("user", turn_text))
-        transcript.append(("assistant", result["reply"]))
+        transcript.append(("user", turn_text, []))
+        transcript.append(("assistant", result["reply"], result["tool_events"]))
         all_events.extend(result["tool_events"])
         final_output = result["reply"]
 

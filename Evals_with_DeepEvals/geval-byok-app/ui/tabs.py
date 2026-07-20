@@ -1,6 +1,7 @@
 """ui/tabs.py — small presentation helpers."""
 from __future__ import annotations
 
+import streamlit as st
 import streamlit.components.v1 as components
 
 
@@ -33,3 +34,27 @@ def render_mermaid(code: str, height: int = 320):
             "tryRender();\n"
             '</script>')
     components.html(html, height=height, scrolling=True)
+
+
+TOOL_ICONS = {"search_docs": "📚", "web_search": "🌐", "escalate_to_human": "🆘"}
+
+
+def render_tool_badges(tool_events: list[dict]) -> None:
+    """Compact chip row under a chat bubble -- which tool(s) fired, and whether the agent stated
+    a plan first -- so the bubble itself stays just the final answer. Full inputs/outputs live in
+    the dedicated Trace section instead of cluttering the conversation.
+    """
+    if not tool_events:
+        return
+    reasoning = next((ev.get("reasoning") for ev in tool_events if ev.get("reasoning")), "")
+    chips = ["🧠 planned"] if reasoning else []
+    seen = set()
+    for ev in tool_events:
+        if ev["tool"] in seen:
+            continue
+        seen.add(ev["tool"])
+        chips.append(f"{TOOL_ICONS.get(ev['tool'], '🔧')} {ev['tool']}")
+    st.caption(" · ".join(chips))
+    if reasoning:
+        with st.expander("🧠 Plan", expanded=False):
+            st.write(reasoning)
