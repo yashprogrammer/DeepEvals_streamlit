@@ -67,28 +67,54 @@ RAG_EXAMPLE_QUESTIONS = [
 # Agent demo data (02_agent_evals_with_deepeval.ipynb)
 # ──────────────────────────────────────────────────────────────────────────────
 def search_docs(query: str = "") -> str:
-    return f"Docs result for '{query}': found a section with a definition and a short example."
+    """A real (tiny) RAG pipeline, not a canned string: reuses the same keyword retriever and
+    RAG_CORPUS as the RAG Evals section, so the agent's tool call actually retrieves and the
+    trace in the Interact tab reflects a genuine retrieval, not a scripted response.
+    """
+    if not query.strip():
+        return "No query given -- nothing retrieved."
+    passages = retrieve(query, k=2)
+    if not passages:
+        return f"No documentation found for '{query}'."
+    numbered = "\n".join(f"{i}. {p}" for i, p in enumerate(passages, 1))
+    return f"Docs result for '{query}':\n{numbered}"
 
 
-def run_code(code: str = "") -> str:
-    if "2**10" in code:
-        return "Executed in a sandbox. stdout: 1024"
-    return "Executed in a sandbox. stdout: (result)"
+def web_search(query: str = "") -> str:
+    """Real, live DuckDuckGo web search (no API key needed -- ddgs talks to DDG directly), so the
+    agent's tool call actually executes instead of returning canned text. Swapped in for a
+    Python-sandbox tool, which isn't safe to run inside a shared Streamlit Community Cloud process.
+    """
+    if not query.strip():
+        return "No query given -- nothing searched."
+    from ddgs import DDGS
+
+    try:
+        results = DDGS().text(query, max_results=3)
+    except Exception as e:
+        return f"Web search failed: {type(e).__name__}: {e}"
+    if not results:
+        return f"No web results found for '{query}'."
+    numbered = "\n".join(
+        f"{i}. {r.get('title', '')} -- {r.get('body', '')} ({r.get('href', '')})"
+        for i, r in enumerate(results, 1)
+    )
+    return f"Web search results for '{query}':\n{numbered}"
 
 
 def escalate_to_human(reason: str = "") -> str:
     return f"Escalated to a human engineer. Ticket AI-{random.randint(1000, 9999)}. Reason: {reason}"
 
 
-AGENT_TOOLS = {"search_docs": search_docs, "run_code": run_code, "escalate_to_human": escalate_to_human}
+AGENT_TOOLS = {"search_docs": search_docs, "web_search": web_search, "escalate_to_human": escalate_to_human}
 
 AGENT_TOOL_SCHEMAS = [
     {"type": "function", "function": {"name": "search_docs",
         "description": "Search internal documentation for a concept or policy.",
         "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
-    {"type": "function", "function": {"name": "run_code",
-        "description": "Execute a Python snippet in a sandbox and return its stdout.",
-        "parameters": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}}},
+    {"type": "function", "function": {"name": "web_search",
+        "description": "Search the public web (DuckDuckGo) for up-to-date information and return the top results.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
     {"type": "function", "function": {"name": "escalate_to_human",
         "description": "Escalate the issue to a human engineer.",
         "parameters": {"type": "object", "properties": {"reason": {"type": "string"}}, "required": ["reason"]}}},
@@ -97,12 +123,12 @@ AGENT_TOOL_SCHEMAS = [
 AGENT_SYSTEM_PROMPT = (
     "You are a GenAI developer assistant. Before acting, briefly state your plan in one short "
     "sentence starting with 'Plan:', then call the tool(s) that actually accomplish the task -- "
-    "do not guess something you can look up or run."
+    "do not guess something you can look up or search for."
 )
 
 AGENT_GOAL = (
-    "Help developers with GenAI questions by looking things up in the docs, running code "
-    "snippets, and escalating to a human when the docs don't resolve the issue."
+    "Help developers with GenAI questions by looking things up in the docs, searching the web "
+    "for anything the docs don't cover, and escalating to a human when neither resolves the issue."
 )
 
 # Ground-truth scenarios for the Agent Evals demo. Each is a sequence of user turns (most are
@@ -116,10 +142,11 @@ AGENT_SCENARIOS = [
         "goal": "Explain the difference between fine-tuning and prompting using the documentation.",
     },
     {
-        "name": "Run a code snippet",
-        "turns": ["Run this and tell me the output: print(2**10)"],
-        "expected_tools": ["run_code"],
-        "goal": "Execute the snippet and report its output.",
+        "name": "Search the web",
+        "turns": ["What's the latest stable version of the DeepEval Python package? "
+                  "Search the web and tell me."],
+        "expected_tools": ["web_search"],
+        "goal": "Search the web and report the latest DeepEval version.",
     },
     {
         "name": "Docs first, then escalate",
@@ -133,11 +160,12 @@ AGENT_SCENARIOS = [
         "name": "Debug, then escalate (multi-turn)",
         "turns": [
             "Can you check if there's a known issue with fine-tuning jobs failing silently?",
-            "That didn't help. Can you also try running a quick diagnostic: print('diagnostic ok')?",
+            "That didn't help. Can you search the web for known Groq fine-tuning silent-failure "
+            "issues?",
             "Still stuck -- please escalate this to a human.",
         ],
-        "expected_tools": ["search_docs", "run_code", "escalate_to_human"],
-        "goal": "Investigate via the docs and a diagnostic run before escalating to a human.",
+        "expected_tools": ["search_docs", "web_search", "escalate_to_human"],
+        "goal": "Investigate via the docs and a web search before escalating to a human.",
     },
 ]
 

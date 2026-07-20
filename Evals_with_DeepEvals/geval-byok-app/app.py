@@ -573,7 +573,7 @@ def render_agent_ground_truths_tab():
         turns_text = st.text_area("Turns (one user message per line — multiple lines = "
                                    "multi-turn)", key="agent_new_turns")
         tools_text = st.text_input(
-            "Expected tools (comma-separated, e.g. search_docs, run_code, escalate_to_human)",
+            "Expected tools (comma-separated, e.g. search_docs, web_search, escalate_to_human)",
             key="agent_new_tools")
         goal = st.text_input("Goal", key="agent_new_goal")
         if st.button("Add", key="agent_add_scenario"):

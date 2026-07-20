@@ -4,3 +4,4 @@
 streamlit==1.58.0
 deepeval==4.1.0
 groq==1.5.0
+ddgs==9.14.4
