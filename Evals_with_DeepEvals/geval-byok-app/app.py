@@ -83,7 +83,7 @@ def render_sidebar() -> str:
                                 "  (optional — a 2nd Groq account for more rate-limit headroom)"))
     keymod.apply_keys(overrides)
 
-    if st.sidebar.button("Validate keys", type="primary", use_container_width=True):
+    if st.sidebar.button("Validate keys", type="primary", width='stretch'):
         valid = {}
         with st.sidebar, st.spinner("Validating…"):
             for name, p in keymod.PROVIDERS.items():
@@ -122,7 +122,7 @@ def render_metric_breakdown(breakdown: list[dict]):
             "Score": f"{row['score']:.2f}" if row["score"] is not None else "—",
             "Reason": row["reason"],
         })
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width='stretch', hide_index=True)
 
 
 def render_observability(verbose_logs: str | None):
@@ -383,7 +383,7 @@ def render_qag_tab():
                 st.write(result["truths"])
             if result["breakdown"]:
                 st.caption("Claim-by-claim breakdown:")
-                st.dataframe(result["breakdown"], use_container_width=True, hide_index=True)
+                st.dataframe(result["breakdown"], width='stretch', hide_index=True)
             render_observability(result.get("verbose_logs"))
 
 
@@ -418,7 +418,7 @@ def render_rag_ground_truths_tab():
     st.dataframe(
         [{"Question": g["input"], "Expected output": g["expected_output"] or "(none — outside the KB)"}
          for g in gts],
-        use_container_width=True, hide_index=True)
+        width='stretch', hide_index=True)
 
     with st.expander("➕ Add a custom ground truth"):
         new_q = st.text_input("Question", key="rag_new_q")
@@ -566,7 +566,7 @@ def render_agent_ground_truths_tab():
         [{"Scenario": s["name"], "Turns": " → ".join(s["turns"]),
           "Expected tools": ", ".join(s["expected_tools"]), "Goal": s["goal"]}
          for s in scenarios],
-        use_container_width=True, hide_index=True)
+        width='stretch', hide_index=True)
 
     with st.expander("➕ Add a custom scenario"):
         name = st.text_input("Scenario name", key="agent_new_name")
@@ -659,7 +659,9 @@ def render_agent_interact_tab():
     st.divider()
     st.subheader("💬 Or chat with the agent directly")
 
-    for role, content, tool_events in st.session_state["agent_chat_display"]:
+    for entry in st.session_state["agent_chat_display"]:
+        role, content = entry[0], entry[1]
+        tool_events = entry[2] if len(entry) > 2 else []
         with st.chat_message(role):
             st.write(content)
             if role == "assistant":
@@ -732,7 +734,7 @@ def render_agent_trace_section(trace_events: list[dict], chat_display: list[tupl
         st.dataframe(
             [{"Tool": f"{TOOL_ICONS.get(ev['tool'], '🔧')} {ev['tool']}",
               "Input": ev["input"], "Output": ev["output"]} for ev in trace_events],
-            use_container_width=True, hide_index=True)
+            width='stretch', hide_index=True)
     with raw_tab:
         st.caption("The nested agent → tool span shape DeepEval's trace-based agent metrics "
                     "(Task Completion, Step Efficiency, Plan Adherence, Plan Quality) read.")
@@ -766,7 +768,7 @@ def render_agent_evaluation_tab():
     st.dataframe(
         [{"Run": r["name"], "Query": r["query"], "Final output": r["final_output"]}
          for r in runs],
-        use_container_width=True, hide_index=True)
+        width='stretch', hide_index=True)
 
     col1, col2 = st.columns(2)
     with col1:

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 
 def render_mermaid(code: str, height: int = 320):
@@ -33,7 +32,7 @@ def render_mermaid(code: str, height: int = 320):
             "}\n"
             "tryRender();\n"
             '</script>')
-    components.html(html, height=height, scrolling=True)
+    st.iframe(html, height=height)
 
 
 TOOL_ICONS = {"search_docs": "📚", "web_search": "🌐", "escalate_to_human": "🆘"}
